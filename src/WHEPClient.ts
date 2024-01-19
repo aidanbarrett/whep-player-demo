@@ -13,7 +13,7 @@ export type WHEPClientConfig = {
 }
 
 export default class WHEPClient {
-  private readonly endpoint: string
+  private readonly endpoint: URL
 
   // @ts-ignore
   private peerConnection: RTCPeerConnection
@@ -32,6 +32,8 @@ export default class WHEPClient {
 
   private connectionStateChangeCallback: (state: RTCPeerConnectionState) => void
 
+  private resourceLocation: string | null
+
   constructor({
                 endpoint,
                 config = {
@@ -48,9 +50,10 @@ export default class WHEPClient {
       throw new Error('cannot disable both audio and video')
     }
 
-    this.endpoint = endpoint
+    this.endpoint = new URL(endpoint)
     this.stream = new MediaStream()
     this.config = config
+    this.resourceLocation = null
     this.streamReadyCallback = () => {}
     this.connectionStateChangeCallback = () => {}
     this.init()
@@ -113,7 +116,8 @@ export default class WHEPClient {
           await this.peerConnection.setRemoteDescription(
               new RTCSessionDescription({ type: 'answer', sdp: answerSDP })
           )
-          return response.headers.get('Location')
+          this.resourceLocation = response.headers.get('Location')
+          return this.resourceLocation
         }
 
         case 403: {
@@ -143,7 +147,7 @@ export default class WHEPClient {
 
   private async waitToCompleteICEGathering(
   ): Promise<RTCSessionDescription> {
-    return new Promise((resolve) => {
+    return new Promise<RTCSessionDescription>((resolve) => {
       const timeoutRef = setTimeout(() => {
         /* eslint-disable no-param-reassign */
         this.peerConnection.onicegatheringstatechange = null
@@ -158,8 +162,23 @@ export default class WHEPClient {
     })
   }
 
+  private getResourceUrl(location: string): string {
+
+    if (location?.match(/^\//)) {
+      const resourceUrl = new URL(
+          location,
+         this.endpoint.origin
+      );
+      return resourceUrl.toString();
+    } else {
+      return location;
+    }
+  }
 
   close() {
+    if(this.resourceLocation) {
+      this.sendDeleteResource(this.getResourceUrl(this.resourceLocation))
+    }
     this.peerConnection.close()
   }
 
@@ -214,13 +233,20 @@ export default class WHEPClient {
   }
 
   private async sendOffer( data: any) {
-    return fetch(this.endpoint, {
+    return fetch(this.endpoint.toString(), {
       method: 'POST',
       mode: 'cors',
       headers: {
         'content-type': 'application/sdp',
       },
       body: data,
+    })
+  }
+
+  private async sendDeleteResource(url: string) {
+    return fetch(url, {
+      method: 'DELETE',
+      mode: 'cors',
     })
   }
 
